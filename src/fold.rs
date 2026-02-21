@@ -11,13 +11,16 @@ pub struct ProteinSdf {
     residues: Vec<Residue>,
     /// Alpha-carbon positions computed from backbone angles.
     positions: Vec<[f64; 3]>,
+    /// Pre-computed per-residue VdW radii — avoids repeated match dispatch in eval hot path.
+    radii: Vec<f64>,
 }
 
 impl ProteinSdf {
     /// Build from residues, computing Cα positions from phi/psi chain geometry.
     pub fn new(residues: Vec<Residue>) -> Self {
         let positions = compute_positions(&residues);
-        Self { residues, positions }
+        let radii = residues.iter().map(|r| r.amino.van_der_waals_radius()).collect();
+        Self { residues, positions, radii }
     }
 
     /// Signed distance: minimum over all atom spheres.
@@ -25,12 +28,25 @@ impl ProteinSdf {
     #[inline]
     pub fn eval(&self, point: &[f64; 3]) -> f64 {
         let mut min_dist = f64::MAX;
+        // min_dist is a signed distance; convert to squared threshold for early culling.
+        // Any atom whose squared distance exceeds (min_dist + max_vdw)² can never beat
+        // the current best. We tighten the bound lazily as min_dist decreases.
         for (i, pos) in self.positions.iter().enumerate() {
             let dx = point[0] - pos[0];
             let dy = point[1] - pos[1];
             let dz = point[2] - pos[2];
-            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-            let sd = dist - self.residues[i].amino.van_der_waals_radius();
+            let dist_sq = dx * dx + dy * dy + dz * dz;
+            let r = self.radii[i];
+            // Early-exit: if the closest possible signed distance from this atom
+            // (dist - r) cannot beat min_dist, skip sqrt entirely.
+            // dist - r < min_dist  <=>  dist < min_dist + r  <=>  dist_sq < (min_dist + r)²
+            // Only valid when min_dist + r > 0 (otherwise everything is inside a sphere).
+            let bound = min_dist + r;
+            if bound > 0.0 && dist_sq >= bound * bound {
+                continue;
+            }
+            let dist = dist_sq.sqrt();
+            let sd = dist - r;
             if sd < min_dist {
                 min_dist = sd;
             }

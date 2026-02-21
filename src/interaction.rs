@@ -1,24 +1,39 @@
 //! Molecular interaction evaluation — pairwise energies, contact maps.
 
 use crate::amino::Residue;
-use crate::potential::{lennard_jones, torsion_potential, TotalEnergy};
+use crate::potential::{torsion_potential, TotalEnergy};
+
+/// Lennard-Jones evaluated directly from dist_sq, avoiding sqrt.
+/// V = 4ε[(σ/r)^12 - (σ/r)^6] = 4ε[(σ²/r²)^6 - (σ²/r²)^3]
+#[inline(always)]
+fn lennard_jones_sq(dist_sq: f64, epsilon: f64, sigma: f64) -> f64 {
+    let sigma_sq = sigma * sigma;
+    let inv_r2 = sigma_sq / dist_sq;
+    let inv_r6 = inv_r2 * inv_r2 * inv_r2;
+    4.0 * epsilon * (inv_r6 * inv_r6 - inv_r6)
+}
 
 /// Evaluate pairwise interaction energy for all residue pairs.
 pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) -> TotalEnergy {
     let mut vdw = 0.0;
     let mut torsional = 0.0;
 
-    // Pairwise van der Waals
+    // Pre-compute per-residue VdW radii to avoid repeated match dispatch in inner loop.
+    let radii: Vec<f64> = residues.iter().map(|r| r.amino.van_der_waals_radius()).collect();
+
+    // Pairwise van der Waals — use dist_sq to avoid sqrt in O(N²) hot path.
+    // (σ/r)^n = (σ²/r²)^(n/2), so LJ can be fully expressed in r² without sqrt.
+    const R_MIN_SQ: f64 = 0.1 * 0.1; // threshold = 0.1 Å, squared
     for i in 0..positions.len() {
         for j in (i + 1)..positions.len() {
             let dx = positions[j][0] - positions[i][0];
             let dy = positions[j][1] - positions[i][1];
             let dz = positions[j][2] - positions[i][2];
-            let r = (dx * dx + dy * dy + dz * dz).sqrt();
-            if r > 0.1 {
-                let sigma = (residues[i].amino.van_der_waals_radius()
-                           + residues[j].amino.van_der_waals_radius()) / 2.0;
-                vdw += lennard_jones(r, 0.1, sigma);
+            let dist_sq = dx * dx + dy * dy + dz * dz;
+            if dist_sq > R_MIN_SQ {
+                // Pre-compute reciprocal of 2 once; sigma = (ri + rj) * 0.5
+                let sigma = (radii[i] + radii[j]) * 0.5;
+                vdw += lennard_jones_sq(dist_sq, 0.1, sigma);
             }
         }
     }
@@ -60,15 +75,17 @@ pub fn radius_of_gyration(positions: &[[f64; 3]]) -> f64 {
         return 0.0;
     }
     let n = positions.len() as f64;
+    // Pre-compute reciprocal: replace 4 divisions (3 center + 1 mean) with multiplications.
+    let inv_n = 1.0 / n;
     let mut center = [0.0; 3];
     for p in positions {
         center[0] += p[0];
         center[1] += p[1];
         center[2] += p[2];
     }
-    center[0] /= n;
-    center[1] /= n;
-    center[2] /= n;
+    center[0] *= inv_n;
+    center[1] *= inv_n;
+    center[2] *= inv_n;
 
     let mut sum_sq = 0.0;
     for p in positions {
@@ -77,7 +94,7 @@ pub fn radius_of_gyration(positions: &[[f64; 3]]) -> f64 {
         let dz = p[2] - center[2];
         sum_sq += dx * dx + dy * dy + dz * dz;
     }
-    (sum_sq / n).sqrt()
+    (sum_sq * inv_n).sqrt()
 }
 
 /// Euclidean distance between the first and last Cα.
