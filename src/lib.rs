@@ -18,11 +18,29 @@
 //! ```
 
 pub mod amino;
-pub mod potential;
+pub mod cell_list;
 pub mod fold;
+pub mod hbond;
 pub mod interaction;
+pub mod potential;
+pub mod secondary;
 
-pub use amino::{AminoAcid, Residue};
-pub use potential::{lennard_jones, coulomb, hydrogen_bond, torsion_potential, TotalEnergy};
+pub use amino::{AminoAcid, RamachandranRegion, Residue};
+pub use cell_list::{CellList, CellListConfig};
 pub use fold::ProteinSdf;
-pub use interaction::{evaluate_pairwise_energy, contact_map, radius_of_gyration, end_to_end_distance};
+pub use hbond::{HBondDetector, HBondHit, HBondConfig};
+pub use interaction::{contact_map, end_to_end_distance, evaluate_pairwise_energy, radius_of_gyration};
+pub use potential::{coulomb, hydrogen_bond, lennard_jones, torsion_potential, TotalEnergy};
+pub use secondary::{assign_secondary_structure, SecondaryStructure};
+
+// ── Shared hash primitive ──────────────────────────────────────────────
+
+#[inline(always)]
+pub(crate) fn fnv1a(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}

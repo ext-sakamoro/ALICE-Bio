@@ -202,4 +202,81 @@ mod tests {
         assert_eq!(sdf.residue_count(), 0);
         assert_eq!(sdf.eval(&[0.0, 0.0, 0.0]), f64::MAX);
     }
+
+    #[test]
+    fn empty_protein_bounding_box_zeros() {
+        let sdf = ProteinSdf::new(vec![]);
+        let (bb_min, bb_max) = sdf.bounding_box();
+        assert_eq!(bb_min, [0.0; 3]);
+        assert_eq!(bb_max, [0.0; 3]);
+    }
+
+    #[test]
+    fn positions_length_matches_residues() {
+        let residues = vec![
+            make_residue(AminoAcid::Ala),
+            make_residue(AminoAcid::Val),
+            make_residue(AminoAcid::Gly),
+        ];
+        let sdf = ProteinSdf::new(residues);
+        assert_eq!(sdf.positions().len(), 3);
+        assert_eq!(sdf.residues().len(), 3);
+    }
+
+    #[test]
+    fn eval_at_vdw_surface_approximately_zero() {
+        // Single Ala at origin with VdW radius 1.9 Å
+        // Evaluating at distance = 1.9 should give ~0
+        let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala)]);
+        let r = AminoAcid::Ala.van_der_waals_radius();
+        let d = sdf.eval(&[r, 0.0, 0.0]);
+        assert!(d.abs() < 1e-10, "SDF at VdW surface should be ~0, got {}", d);
+    }
+
+    #[test]
+    fn eval_batch_empty_returns_empty() {
+        let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala)]);
+        let result = sdf.eval_batch(&[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn bounding_box_padded_by_max_vdw() {
+        // Single residue at origin: bounding box should extend by VdW radius
+        let aa = AminoAcid::Trp;
+        let sdf = ProteinSdf::new(vec![make_residue(aa)]);
+        let (bb_min, bb_max) = sdf.bounding_box();
+        let r = aa.van_der_waals_radius();
+        // Position is at origin, so bb_min should be [-r, -r, -r] and bb_max [r, r, r]
+        for i in 0..3 {
+            assert!((bb_min[i] - (-r)).abs() < 1e-10, "bb_min[{}] = {}, expected {}", i, bb_min[i], -r);
+            assert!((bb_max[i] - r).abs() < 1e-10, "bb_max[{}] = {}, expected {}", i, bb_max[i], r);
+        }
+    }
+
+    #[test]
+    fn first_residue_at_origin() {
+        let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala), make_residue(AminoAcid::Val)]);
+        let pos = sdf.positions();
+        assert_eq!(pos[0], [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn consecutive_positions_ca_distance_apart() {
+        // With zero phi/psi, direction stays along x-axis, each step = CA_DISTANCE
+        let residues = vec![
+            Residue::new(AminoAcid::Ala, 0.0, 0.0, PI),
+            Residue::new(AminoAcid::Ala, 0.0, 0.0, PI),
+            Residue::new(AminoAcid::Ala, 0.0, 0.0, PI),
+        ];
+        let sdf = ProteinSdf::new(residues);
+        let pos = sdf.positions();
+        for i in 1..pos.len() {
+            let dx = pos[i][0] - pos[i-1][0];
+            let dy = pos[i][1] - pos[i-1][1];
+            let dz = pos[i][2] - pos[i-1][2];
+            let dist = (dx*dx + dy*dy + dz*dz).sqrt();
+            assert!((dist - CA_DISTANCE).abs() < 1e-10, "Step {} distance = {}", i, dist);
+        }
+    }
 }

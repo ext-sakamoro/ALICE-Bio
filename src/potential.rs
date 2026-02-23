@@ -116,4 +116,91 @@ mod tests {
         };
         assert!((e.total() - 0.5).abs() < 1e-10);
     }
+
+    #[test]
+    fn total_energy_default_is_zero() {
+        let e = TotalEnergy::default();
+        assert_eq!(e.total(), 0.0);
+        assert_eq!(e.van_der_waals, 0.0);
+        assert_eq!(e.electrostatic, 0.0);
+        assert_eq!(e.hydrogen_bonds, 0.0);
+        assert_eq!(e.torsional, 0.0);
+    }
+
+    #[test]
+    fn lj_zero_crossing_at_sigma() {
+        // At r = sigma, LJ = 4ε[(1)^12 - (1)^6] = 4ε[1 - 1] = 0
+        let sigma = 3.4;
+        let epsilon = 1.0;
+        let v = lennard_jones(sigma, epsilon, sigma);
+        assert!(v.abs() < 1e-10, "LJ at r=sigma should be ~0, got {}", v);
+    }
+
+    #[test]
+    fn lj_approaches_zero_at_large_r() {
+        let v = lennard_jones(100.0, 1.0, 3.4);
+        assert!(v.abs() < 1e-6, "LJ should approach 0 at large r, got {}", v);
+    }
+
+    #[test]
+    fn coulomb_higher_dielectric_reduces_potential() {
+        let v1 = coulomb(1.0, 1.0, 5.0, 1.0);
+        let v80 = coulomb(1.0, 1.0, 5.0, 80.0);
+        assert!(v1 > v80);
+        assert!((v1 / v80 - 80.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn coulomb_inverse_distance_law() {
+        // V ∝ 1/r, so V(r) * r should be constant
+        let vr1 = coulomb(1.0, 1.0, 2.0, 1.0) * 2.0;
+        let vr2 = coulomb(1.0, 1.0, 5.0, 1.0) * 5.0;
+        assert!((vr1 - vr2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn hbond_repulsive_at_short_distance() {
+        // At r << r_eq, the r^12 term dominates → large positive energy
+        let v = hydrogen_bond(1.0, 2.8, 5.0);
+        assert!(v > 0.0, "H-bond should be repulsive at short distance, got {}", v);
+    }
+
+    #[test]
+    fn hbond_approaches_zero_at_large_r() {
+        let v = hydrogen_bond(100.0, 2.8, 5.0);
+        assert!(v.abs() < 1e-4, "H-bond should approach 0 at large r, got {}", v);
+    }
+
+    #[test]
+    fn torsion_barrier_zero_gives_constant() {
+        // If barrier = 0, torsion potential = 0 for all angles
+        let v1 = torsion_potential(0.0, 0.0, 3, 0.0);
+        let v2 = torsion_potential(1.5, 0.0, 3, 0.0);
+        assert_eq!(v1, 0.0);
+        assert_eq!(v2, 0.0);
+    }
+
+    #[test]
+    fn torsion_maximum_at_phase() {
+        // V = (barrier/2) * [1 + cos(n*angle - phase)]
+        // Maximum when cos(...) = 1, i.e. n*angle = phase → angle = phase/n
+        let barrier = 4.0;
+        let n = 3u32;
+        let phase = 1.0;
+        let angle = phase / n as f64;
+        let v = torsion_potential(angle, barrier, n, phase);
+        assert!((v - barrier).abs() < 1e-10, "Expected barrier={}, got {}", barrier, v);
+    }
+
+    #[test]
+    fn torsion_minimum_value() {
+        // Minimum when cos(...) = -1 → V = 0
+        // cos(n*angle - phase) = -1 → n*angle - phase = PI
+        let barrier = 2.0;
+        let n = 3u32;
+        let phase = 0.0;
+        let angle = PI / n as f64;
+        let v = torsion_potential(angle, barrier, n, phase);
+        assert!(v.abs() < 1e-10, "Torsion minimum should be 0, got {}", v);
+    }
 }

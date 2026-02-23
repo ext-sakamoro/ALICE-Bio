@@ -1,6 +1,8 @@
 //! Molecular interaction evaluation — pairwise energies, contact maps.
 
 use crate::amino::Residue;
+use crate::cell_list::{CellList, CellListConfig};
+use crate::hbond::{HBondConfig, HBondDetector};
 use crate::potential::{torsion_potential, TotalEnergy};
 
 /// Lennard-Jones evaluated directly from dist_sq, avoiding sqrt.
@@ -14,6 +16,10 @@ fn lennard_jones_sq(dist_sq: f64, epsilon: f64, sigma: f64) -> f64 {
 }
 
 /// Evaluate pairwise interaction energy for all residue pairs.
+///
+/// For small systems (N < 50), uses O(N²) brute-force. For larger systems,
+/// uses a cell-linked list for O(N) neighbor search. Hydrogen bonds are
+/// evaluated via `HBondDetector`.
 pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) -> TotalEnergy {
     let mut vdw = 0.0;
     let mut torsional = 0.0;
@@ -21,19 +27,33 @@ pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) ->
     // Pre-compute per-residue VdW radii to avoid repeated match dispatch in inner loop.
     let radii: Vec<f64> = residues.iter().map(|r| r.amino.van_der_waals_radius()).collect();
 
-    // Pairwise van der Waals — use dist_sq to avoid sqrt in O(N²) hot path.
-    // (σ/r)^n = (σ²/r²)^(n/2), so LJ can be fully expressed in r² without sqrt.
     const R_MIN_SQ: f64 = 0.1 * 0.1; // threshold = 0.1 Å, squared
-    for i in 0..positions.len() {
-        for j in (i + 1)..positions.len() {
-            let dx = positions[j][0] - positions[i][0];
-            let dy = positions[j][1] - positions[i][1];
-            let dz = positions[j][2] - positions[i][2];
-            let dist_sq = dx * dx + dy * dy + dz * dz;
+    const CELL_LIST_THRESHOLD: usize = 50;
+    const VDW_CUTOFF: f64 = 12.0; // Angstroms
+
+    if positions.len() >= CELL_LIST_THRESHOLD {
+        // Cell-linked list path: O(N) for uniform distributions.
+        let cfg = CellListConfig { cutoff: VDW_CUTOFF, origin: None };
+        let cl = CellList::build(positions, &cfg);
+        let pairs = cl.find_pairs(positions);
+        for &(i, j, dist_sq) in &pairs {
             if dist_sq > R_MIN_SQ {
-                // Pre-compute reciprocal of 2 once; sigma = (ri + rj) * 0.5
                 let sigma = (radii[i] + radii[j]) * 0.5;
                 vdw += lennard_jones_sq(dist_sq, 0.1, sigma);
+            }
+        }
+    } else {
+        // Brute-force path for small systems.
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                let dx = positions[j][0] - positions[i][0];
+                let dy = positions[j][1] - positions[i][1];
+                let dz = positions[j][2] - positions[i][2];
+                let dist_sq = dx * dx + dy * dy + dz * dz;
+                if dist_sq > R_MIN_SQ {
+                    let sigma = (radii[i] + radii[j]) * 0.5;
+                    vdw += lennard_jones_sq(dist_sq, 0.1, sigma);
+                }
             }
         }
     }
@@ -44,10 +64,15 @@ pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) ->
         torsional += torsion_potential(res.psi, 0.5, 3, 0.0);
     }
 
+    // Hydrogen bond evaluation via HBondDetector
+    let hbond_detector = HBondDetector::new(HBondConfig::default());
+    let hbond_hits = hbond_detector.detect(residues, positions);
+    let hbond_energy: f64 = hbond_hits.iter().map(|h| h.energy).sum();
+
     TotalEnergy {
         van_der_waals: vdw,
         electrostatic: 0.0,
-        hydrogen_bonds: 0.0,
+        hydrogen_bonds: hbond_energy,
         torsional,
     }
 }
@@ -166,5 +191,116 @@ mod tests {
     #[test]
     fn end_to_end_single_residue() {
         assert_eq!(end_to_end_distance(&[[0.0, 0.0, 0.0]]), 0.0);
+    }
+
+    #[test]
+    fn hbond_energy_nonzero_with_separated_residues() {
+        // 4+ residues with sufficient sequence separation and close distance
+        let residues = vec![
+            Residue::new(AminoAcid::Ala, -1.0, -0.8, PI),
+            Residue::new(AminoAcid::Gly, -1.0, -0.8, PI),
+            Residue::new(AminoAcid::Val, -1.0, -0.8, PI),
+            Residue::new(AminoAcid::Leu, -1.0, -0.8, PI),
+        ];
+        // Residue 0 and 3 are within H-bond distance (3.0 Å)
+        let positions = [
+            [0.0, 0.0, 0.0],
+            [3.8, 0.0, 0.0],
+            [7.6, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ];
+        let e = evaluate_pairwise_energy(&residues, &positions);
+        assert!(e.hydrogen_bonds < 0.0, "H-bond energy should be negative, got {}", e.hydrogen_bonds);
+    }
+
+    #[test]
+    fn cell_list_path_large_system() {
+        // Create 60 residues to trigger cell-list path (threshold = 50)
+        let n = 60;
+        let residues: Vec<Residue> = (0..n)
+            .map(|_| Residue::new(AminoAcid::Ala, -1.0, -0.8, PI))
+            .collect();
+        let positions: Vec<[f64; 3]> = (0..n)
+            .map(|i| [i as f64 * 3.8, 0.0, 0.0])
+            .collect();
+        let e = evaluate_pairwise_energy(&residues, &positions);
+        assert!(e.van_der_waals.is_finite());
+        assert!(e.torsional.is_finite());
+    }
+
+    #[test]
+    fn contact_map_empty_positions() {
+        let contacts = contact_map(&[], 5.0);
+        assert!(contacts.is_empty());
+    }
+
+    #[test]
+    fn contact_map_single_atom() {
+        let contacts = contact_map(&[[0.0, 0.0, 0.0]], 5.0);
+        assert!(contacts.is_empty());
+    }
+
+    #[test]
+    fn contact_map_all_within_threshold() {
+        let positions = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let contacts = contact_map(&positions, 10.0);
+        // All 3 pairs should be within threshold
+        assert_eq!(contacts.len(), 3);
+    }
+
+    #[test]
+    fn rg_empty_returns_zero() {
+        assert_eq!(radius_of_gyration(&[]), 0.0);
+    }
+
+    #[test]
+    fn rg_symmetric_cube_vertices() {
+        // 8 vertices of a cube centered at origin with side length 2
+        let positions = [
+            [-1.0, -1.0, -1.0], [-1.0, -1.0, 1.0],
+            [-1.0, 1.0, -1.0],  [-1.0, 1.0, 1.0],
+            [1.0, -1.0, -1.0],  [1.0, -1.0, 1.0],
+            [1.0, 1.0, -1.0],   [1.0, 1.0, 1.0],
+        ];
+        let rg = radius_of_gyration(&positions);
+        // Each vertex is at distance sqrt(3) from center, Rg = sqrt(3)
+        let expected = 3.0_f64.sqrt();
+        assert!((rg - expected).abs() < 1e-10, "Rg = {}, expected {}", rg, expected);
+    }
+
+    #[test]
+    fn end_to_end_empty_returns_zero() {
+        assert_eq!(end_to_end_distance(&[]), 0.0);
+    }
+
+    #[test]
+    fn end_to_end_3d_diagonal() {
+        let positions = [[0.0, 0.0, 0.0], [3.0, 4.0, 0.0]];
+        let d = end_to_end_distance(&positions);
+        assert!((d - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn evaluate_pairwise_torsional_nonzero() {
+        // Even with widely separated positions, torsional energy from backbone angles is nonzero
+        let residues = vec![
+            Residue::new(AminoAcid::Ala, -1.0, -0.8, PI),
+            Residue::new(AminoAcid::Gly, 0.5, 0.3, PI),
+        ];
+        let positions = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]; // far apart, no VdW
+        let e = evaluate_pairwise_energy(&residues, &positions);
+        assert!(e.torsional > 0.0, "Torsional energy should be positive, got {}", e.torsional);
+    }
+
+    #[test]
+    fn evaluate_pairwise_total_is_sum_of_components() {
+        let residues = vec![
+            Residue::new(AminoAcid::Ala, -1.0, -0.8, PI),
+            Residue::new(AminoAcid::Val, -0.5, -0.3, PI),
+        ];
+        let positions = [[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]];
+        let e = evaluate_pairwise_energy(&residues, &positions);
+        let expected = e.van_der_waals + e.electrostatic + e.hydrogen_bonds + e.torsional;
+        assert!((e.total() - expected).abs() < 1e-15);
     }
 }
