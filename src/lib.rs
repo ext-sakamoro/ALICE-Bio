@@ -33,20 +33,30 @@
 pub mod amino;
 pub mod cell_list;
 pub mod fold;
+pub mod forcefield;
 pub mod hbond;
+pub mod homology;
 pub mod interaction;
+pub mod md_bio;
 pub mod potential;
 pub mod secondary;
+pub mod sequence;
+pub mod validate;
 
 pub use amino::{AminoAcid, RamachandranRegion, Residue};
 pub use cell_list::{CellList, CellListConfig};
 pub use fold::ProteinSdf;
+pub use forcefield::{AngleParam, AtomType, BondParam, DihedralParam};
 pub use hbond::{HBondConfig, HBondDetector, HBondHit};
+pub use homology::{build_model, HomologyModel, Template};
 pub use interaction::{
     contact_map, end_to_end_distance, evaluate_pairwise_energy, radius_of_gyration,
 };
+pub use md_bio::{BioParticle, LangevinConfig};
 pub use potential::{coulomb, hydrogen_bond, lennard_jones, torsion_potential, TotalEnergy};
 pub use secondary::{assign_secondary_structure, SecondaryStructure};
+pub use sequence::{parse_fasta, FastaRecord};
+pub use validate::{detect_clashes, ramachandran_stats, validate_bond_lengths, validation_score};
 
 // ── Shared hash primitive ──────────────────────────────────────────────
 
