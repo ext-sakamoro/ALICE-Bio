@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 /// Uses a pre-computed reciprocal `inv_r = 1/r` to replace division with multiplication,
 /// reducing latency for callers that already have r available.
 #[inline(always)]
+#[must_use]
 pub fn lennard_jones(r: f64, epsilon: f64, sigma: f64) -> f64 {
     let inv_r = 1.0 / r; // single division; subsequent ops are multiplications
     let s_over_r = sigma * inv_r;
@@ -18,6 +19,7 @@ pub fn lennard_jones(r: f64, epsilon: f64, sigma: f64) -> f64 {
 ///
 /// Pre-computes `inv_r` to make the denominator a multiply chain.
 #[inline(always)]
+#[must_use]
 pub fn coulomb(q1: f64, q2: f64, r: f64, dielectric: f64) -> f64 {
     // Pre-computed constant reciprocal: 1/(4π) ≈ 0.07957747…
     const INV_4PI: f64 = 1.0 / (4.0 * PI);
@@ -25,10 +27,11 @@ pub fn coulomb(q1: f64, q2: f64, r: f64, dielectric: f64) -> f64 {
     q1 * q2 * INV_4PI * (1.0 / dielectric) * inv_r
 }
 
-/// Simplified hydrogen bond potential: depth * [(r_eq/r)^12 - 2*(r_eq/r)^6]
+/// Simplified hydrogen bond potential: depth * [(`r_eq/r)^12` - 2*(`r_eq/r)^6`]
 ///
 /// Uses `inv_r` to replace division with multiplication.
 #[inline(always)]
+#[must_use]
 pub fn hydrogen_bond(r: f64, r_eq: f64, depth: f64) -> f64 {
     let inv_r = 1.0 / r; // single division
     let ratio = r_eq * inv_r;
@@ -40,6 +43,7 @@ pub fn hydrogen_bond(r: f64, r_eq: f64, depth: f64) -> f64 {
 ///
 /// Uses multiplication by 0.5 instead of division by 2.
 #[inline(always)]
+#[must_use]
 pub fn torsion_potential(angle: f64, barrier: f64, n: u32, phase: f64) -> f64 {
     (barrier * 0.5) * (1.0 + (n as f64 * angle - phase).cos())
 }
@@ -55,6 +59,7 @@ pub struct TotalEnergy {
 
 impl TotalEnergy {
     #[inline]
+    #[must_use]
     pub fn total(&self) -> f64 {
         self.van_der_waals + self.electrostatic + self.hydrogen_bonds + self.torsional
     }
@@ -162,13 +167,21 @@ mod tests {
     fn hbond_repulsive_at_short_distance() {
         // At r << r_eq, the r^12 term dominates → large positive energy
         let v = hydrogen_bond(1.0, 2.8, 5.0);
-        assert!(v > 0.0, "H-bond should be repulsive at short distance, got {}", v);
+        assert!(
+            v > 0.0,
+            "H-bond should be repulsive at short distance, got {}",
+            v
+        );
     }
 
     #[test]
     fn hbond_approaches_zero_at_large_r() {
         let v = hydrogen_bond(100.0, 2.8, 5.0);
-        assert!(v.abs() < 1e-4, "H-bond should approach 0 at large r, got {}", v);
+        assert!(
+            v.abs() < 1e-4,
+            "H-bond should approach 0 at large r, got {}",
+            v
+        );
     }
 
     #[test]
@@ -189,7 +202,12 @@ mod tests {
         let phase = 1.0;
         let angle = phase / n as f64;
         let v = torsion_potential(angle, barrier, n, phase);
-        assert!((v - barrier).abs() < 1e-10, "Expected barrier={}, got {}", barrier, v);
+        assert!(
+            (v - barrier).abs() < 1e-10,
+            "Expected barrier={}, got {}",
+            barrier,
+            v
+        );
     }
 
     #[test]

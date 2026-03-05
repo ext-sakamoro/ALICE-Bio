@@ -6,6 +6,8 @@
 //!
 //! Author: Moroya Sakamoto
 
+use rayon::prelude::*;
+
 /// Configuration for the cell list.
 #[derive(Debug, Clone, Copy)]
 pub struct CellListConfig {
@@ -41,6 +43,7 @@ pub struct CellList {
 
 impl CellList {
     /// Build a cell list from atom positions with given cutoff.
+    #[must_use]
     pub fn build(positions: &[[f64; 3]], config: &CellListConfig) -> Self {
         if positions.is_empty() {
             return Self {
@@ -59,16 +62,19 @@ impl CellList {
         let mut max = [f64::MIN; 3];
         for p in positions {
             for i in 0..3 {
-                if p[i] < min[i] { min[i] = p[i]; }
-                if p[i] > max[i] { max[i] = p[i]; }
+                if p[i] < min[i] {
+                    min[i] = p[i];
+                }
+                if p[i] > max[i] {
+                    max[i] = p[i];
+                }
             }
         }
 
-        let origin = config.origin.unwrap_or([
-            min[0] - cell_size,
-            min[1] - cell_size,
-            min[2] - cell_size,
-        ]);
+        let origin =
+            config
+                .origin
+                .unwrap_or([min[0] - cell_size, min[1] - cell_size, min[2] - cell_size]);
 
         // Grid dimensions (at least 1 cell per axis)
         let inv_cell = 1.0 / cell_size;
@@ -104,69 +110,77 @@ impl CellList {
     }
 
     /// Find all pairs within cutoff distance. Returns `(i, j, dist_sq)` where `i < j`.
+    #[must_use]
     pub fn find_pairs(&self, positions: &[[f64; 3]]) -> Vec<(usize, usize, f64)> {
         let cutoff_sq = self.cell_size * self.cell_size;
-        let mut pairs = Vec::new();
 
         if self.dims[0] == 0 {
-            return pairs;
+            return Vec::new();
         }
 
         let [nx, ny, nz] = self.dims;
+        let total_cells = nx * ny * nz;
 
-        for cx in 0..nx {
-            for cy in 0..ny {
-                for cz in 0..nz {
-                    let cell_idx = cx * ny * nz + cy * nz + cz;
+        let pairs: Vec<(usize, usize, f64)> = (0..total_cells)
+            .into_par_iter()
+            .flat_map(|cell_idx| {
+                let cx = cell_idx / (ny * nz);
+                let rem = cell_idx % (ny * nz);
+                let cy = rem / nz;
+                let cz = rem % nz;
 
-                    // Check same cell (self-pairs)
-                    let atoms = &self.cells[cell_idx];
-                    for a in 0..atoms.len() {
-                        for b in (a + 1)..atoms.len() {
-                            let i = atoms[a];
-                            let j = atoms[b];
+                let mut local_pairs: Vec<(usize, usize, f64)> = Vec::new();
+
+                // Check same cell (self-pairs)
+                let atoms = &self.cells[cell_idx];
+                for a in 0..atoms.len() {
+                    for b in (a + 1)..atoms.len() {
+                        let i = atoms[a];
+                        let j = atoms[b];
+                        let dsq = dist_sq(&positions[i], &positions[j]);
+                        if dsq <= cutoff_sq {
+                            let (lo, hi) = if i < j { (i, j) } else { (j, i) };
+                            local_pairs.push((lo, hi, dsq));
+                        }
+                    }
+                }
+
+                // Check 13 forward neighbors (to avoid double counting)
+                for &(dx, dy, dz) in &FORWARD_NEIGHBORS {
+                    let nx2 = cx as isize + dx;
+                    let ny2 = cy as isize + dy;
+                    let nz2 = cz as isize + dz;
+                    if nx2 < 0 || ny2 < 0 || nz2 < 0 {
+                        continue;
+                    }
+                    let (nx2, ny2, nz2) = (nx2 as usize, ny2 as usize, nz2 as usize);
+                    if nx2 >= nx || ny2 >= ny || nz2 >= nz {
+                        continue;
+                    }
+                    let neighbor_idx = nx2 * ny * nz + ny2 * nz + nz2;
+                    let neighbors = &self.cells[neighbor_idx];
+
+                    for &i in atoms {
+                        for &j in neighbors {
                             let dsq = dist_sq(&positions[i], &positions[j]);
                             if dsq <= cutoff_sq {
                                 let (lo, hi) = if i < j { (i, j) } else { (j, i) };
-                                pairs.push((lo, hi, dsq));
-                            }
-                        }
-                    }
-
-                    // Check 13 forward neighbors (to avoid double counting)
-                    for &(dx, dy, dz) in &FORWARD_NEIGHBORS {
-                        let nx2 = cx as isize + dx;
-                        let ny2 = cy as isize + dy;
-                        let nz2 = cz as isize + dz;
-                        if nx2 < 0 || ny2 < 0 || nz2 < 0 {
-                            continue;
-                        }
-                        let (nx2, ny2, nz2) = (nx2 as usize, ny2 as usize, nz2 as usize);
-                        if nx2 >= nx || ny2 >= ny || nz2 >= nz {
-                            continue;
-                        }
-                        let neighbor_idx = nx2 * ny * nz + ny2 * nz + nz2;
-                        let neighbors = &self.cells[neighbor_idx];
-
-                        for &i in atoms {
-                            for &j in neighbors {
-                                let dsq = dist_sq(&positions[i], &positions[j]);
-                                if dsq <= cutoff_sq {
-                                    let (lo, hi) = if i < j { (i, j) } else { (j, i) };
-                                    pairs.push((lo, hi, dsq));
-                                }
+                                local_pairs.push((lo, hi, dsq));
                             }
                         }
                     }
                 }
-            }
-        }
+
+                local_pairs
+            })
+            .collect();
 
         pairs
     }
 
     /// Find all neighbors of a specific atom within cutoff.
     /// Returns `(neighbor_index, dist_sq)`.
+    #[must_use]
     pub fn neighbors_of(&self, atom_idx: usize, positions: &[[f64; 3]]) -> Vec<(usize, f64)> {
         let cutoff_sq = self.cell_size * self.cell_size;
         let mut result = Vec::new();
@@ -214,16 +228,19 @@ impl CellList {
     }
 
     /// Number of cells in the grid.
+    #[must_use]
     pub fn cell_count(&self) -> usize {
         self.cells.len()
     }
 
     /// Grid dimensions.
+    #[must_use]
     pub fn dims(&self) -> [usize; 3] {
         self.dims
     }
 
     /// Grid origin (minimum corner).
+    #[must_use]
     pub fn origin(&self) -> [f64; 3] {
         self.origin
     }
@@ -231,10 +248,19 @@ impl CellList {
 
 /// 13 forward neighbors for half-shell enumeration.
 const FORWARD_NEIGHBORS: [(isize, isize, isize); 13] = [
-    (1, 0, 0), (0, 1, 0), (0, 0, 1),
-    (1, 1, 0), (1, -1, 0), (1, 0, 1), (1, 0, -1),
-    (0, 1, 1), (0, 1, -1),
-    (1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1),
+    (1, 0, 0),
+    (0, 1, 0),
+    (0, 0, 1),
+    (1, 1, 0),
+    (1, -1, 0),
+    (1, 0, 1),
+    (1, 0, -1),
+    (0, 1, 1),
+    (0, 1, -1),
+    (1, 1, 1),
+    (1, 1, -1),
+    (1, -1, 1),
+    (1, -1, -1),
 ];
 
 #[inline]
@@ -268,7 +294,10 @@ mod tests {
     #[test]
     fn two_atoms_within_cutoff() {
         let pos = [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
-        let cfg = CellListConfig { cutoff: 5.0, origin: None };
+        let cfg = CellListConfig {
+            cutoff: 5.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let pairs = cl.find_pairs(&pos);
         assert_eq!(pairs.len(), 1);
@@ -280,7 +309,10 @@ mod tests {
     #[test]
     fn two_atoms_beyond_cutoff() {
         let pos = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]];
-        let cfg = CellListConfig { cutoff: 5.0, origin: None };
+        let cfg = CellListConfig {
+            cutoff: 5.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let pairs = cl.find_pairs(&pos);
         assert!(pairs.is_empty());
@@ -298,7 +330,10 @@ mod tests {
             }
         }
         let cutoff = 3.0;
-        let cfg = CellListConfig { cutoff, origin: None };
+        let cfg = CellListConfig {
+            cutoff,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let cell_pairs = cl.find_pairs(&pos);
 
@@ -325,12 +360,11 @@ mod tests {
 
     #[test]
     fn neighbors_of_specific_atom() {
-        let pos = [
-            [0.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-            [100.0, 0.0, 0.0],
-        ];
-        let cfg = CellListConfig { cutoff: 5.0, origin: None };
+        let pos = [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [100.0, 0.0, 0.0]];
+        let cfg = CellListConfig {
+            cutoff: 5.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let nbrs = cl.neighbors_of(0, &pos);
         let ids: Vec<usize> = nbrs.iter().map(|&(i, _)| i).collect();
@@ -348,7 +382,10 @@ mod tests {
     fn cutoff_boundary_included() {
         // Two atoms exactly at cutoff distance
         let pos = [[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]];
-        let cfg = CellListConfig { cutoff: 5.0, origin: None };
+        let cfg = CellListConfig {
+            cutoff: 5.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let pairs = cl.find_pairs(&pos);
         assert_eq!(pairs.len(), 1);
@@ -360,7 +397,10 @@ mod tests {
         for i in 0..100 {
             pos.push([i as f64 * 0.5, 0.0, 0.0]);
         }
-        let cfg = CellListConfig { cutoff: 2.0, origin: None };
+        let cfg = CellListConfig {
+            cutoff: 2.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let pairs = cl.find_pairs(&pos);
         assert!(!pairs.is_empty());
@@ -369,7 +409,10 @@ mod tests {
     #[test]
     fn dims_reasonable() {
         let pos = [[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]];
-        let cfg = CellListConfig { cutoff: 5.0, origin: None };
+        let cfg = CellListConfig {
+            cutoff: 5.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let dims = cl.dims();
         assert!(dims[0] >= 2);
@@ -406,7 +449,10 @@ mod tests {
     fn collinear_atoms_all_within_cutoff() {
         // 5 atoms in a line, each 1.0 apart, cutoff=5.0
         let pos: Vec<[f64; 3]> = (0..5).map(|i| [i as f64, 0.0, 0.0]).collect();
-        let cfg = CellListConfig { cutoff: 5.0, origin: None };
+        let cfg = CellListConfig {
+            cutoff: 5.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
         let pairs = cl.find_pairs(&pos);
         // All 5*4/2 = 10 pairs should be within cutoff (max dist = 4.0 < 5.0)
@@ -416,19 +462,21 @@ mod tests {
     #[test]
     fn symmetry_of_neighbors() {
         // If atom j is a neighbor of atom i, then atom i is a neighbor of atom j
-        let pos = [
-            [0.0, 0.0, 0.0],
-            [3.0, 0.0, 0.0],
-            [6.0, 0.0, 0.0],
-        ];
-        let cfg = CellListConfig { cutoff: 4.0, origin: None };
+        let pos = [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [6.0, 0.0, 0.0]];
+        let cfg = CellListConfig {
+            cutoff: 4.0,
+            origin: None,
+        };
         let cl = CellList::build(&pos, &cfg);
 
         let nbrs_of_0: Vec<usize> = cl.neighbors_of(0, &pos).iter().map(|&(i, _)| i).collect();
         let nbrs_of_1: Vec<usize> = cl.neighbors_of(1, &pos).iter().map(|&(i, _)| i).collect();
 
         if nbrs_of_0.contains(&1) {
-            assert!(nbrs_of_1.contains(&0), "Neighbor symmetry violated: 0 sees 1 but 1 doesn't see 0");
+            assert!(
+                nbrs_of_1.contains(&0),
+                "Neighbor symmetry violated: 0 sees 1 but 1 doesn't see 0"
+            );
         }
     }
 

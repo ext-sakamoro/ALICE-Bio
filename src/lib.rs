@@ -1,3 +1,16 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::similar_names,
+    clippy::many_single_char_names,
+    clippy::module_name_repetitions,
+    clippy::inline_always,
+    clippy::too_many_lines
+)]
+
 //! ALICE-Bio — Molecular Structure as Signed Distance Functions
 //!
 //! Models molecular structures as SDF primitives instead of raw coordinate
@@ -28,8 +41,10 @@ pub mod secondary;
 pub use amino::{AminoAcid, RamachandranRegion, Residue};
 pub use cell_list::{CellList, CellListConfig};
 pub use fold::ProteinSdf;
-pub use hbond::{HBondDetector, HBondHit, HBondConfig};
-pub use interaction::{contact_map, end_to_end_distance, evaluate_pairwise_energy, radius_of_gyration};
+pub use hbond::{HBondConfig, HBondDetector, HBondHit};
+pub use interaction::{
+    contact_map, end_to_end_distance, evaluate_pairwise_energy, radius_of_gyration,
+};
 pub use potential::{coulomb, hydrogen_bond, lennard_jones, torsion_potential, TotalEnergy};
 pub use secondary::{assign_secondary_structure, SecondaryStructure};
 
@@ -37,10 +52,10 @@ pub use secondary::{assign_secondary_structure, SecondaryStructure};
 
 #[inline(always)]
 pub(crate) fn fnv1a(data: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in data {
         h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     h
 }

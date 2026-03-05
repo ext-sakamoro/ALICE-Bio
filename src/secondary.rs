@@ -7,8 +7,8 @@
 //! Author: Moroya Sakamoto
 
 use crate::amino::Residue;
-use crate::hbond::{HBondConfig, HBondDetector, HBondHit};
 use crate::fnv1a;
+use crate::hbond::{HBondConfig, HBondDetector, HBondHit};
 
 /// Secondary structure type for a single residue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,12 +48,12 @@ impl Default for SecondaryConfig {
     fn default() -> Self {
         Self {
             use_hbonds: false,
-            helix_phi_center: -1.047,  // -60°
-            helix_psi_center: -0.785,  // -45°
-            helix_tolerance: 0.524,    // 30°
-            sheet_phi_center: -2.094,  // -120°
-            sheet_psi_center: 2.269,   // 130°
-            sheet_tolerance: 0.524,    // 30°
+            helix_phi_center: -1.047, // -60°
+            helix_psi_center: -0.785, // -45°
+            helix_tolerance: 0.524,   // 30°
+            sheet_phi_center: -2.094, // -120°
+            sheet_psi_center: 2.269,  // 130°
+            sheet_tolerance: 0.524,   // 30°
             min_helix_run: 3,
             min_sheet_run: 2,
         }
@@ -104,14 +104,18 @@ fn angle_diff(a: f64, b: f64) -> f64 {
 #[inline]
 fn classify_by_angles(residue: &Residue, config: &SecondaryConfig) -> SecondaryStructure {
     if in_region(
-        residue.phi, residue.psi,
-        config.helix_phi_center, config.helix_psi_center,
+        residue.phi,
+        residue.psi,
+        config.helix_phi_center,
+        config.helix_psi_center,
         config.helix_tolerance,
     ) {
         SecondaryStructure::Helix
     } else if in_region(
-        residue.phi, residue.psi,
-        config.sheet_phi_center, config.sheet_psi_center,
+        residue.phi,
+        residue.psi,
+        config.sheet_phi_center,
+        config.sheet_psi_center,
         config.sheet_tolerance,
     ) {
         SecondaryStructure::Sheet
@@ -152,7 +156,7 @@ fn apply_run_filter(assignments: &mut [SecondaryStructure], config: &SecondaryCo
         };
 
         if run_len < min_run {
-            for elem in assignments[start..i].iter_mut() {
+            for elem in &mut assignments[start..i] {
                 *elem = SecondaryStructure::Coil;
             }
         }
@@ -189,7 +193,7 @@ fn refine_with_hbonds(
             // Alpha helix pattern: i → i+4
             let lo = d.min(a);
             let hi = d.max(a);
-            for elem in helix_score[lo..=hi.min(n - 1)].iter_mut() {
+            for elem in &mut helix_score[lo..=hi.min(n - 1)] {
                 *elem += 1;
             }
         } else if sep >= 5 {
@@ -216,6 +220,7 @@ fn refine_with_hbonds(
 ///
 /// If `positions` is provided and `config.use_hbonds` is true,
 /// hydrogen bond patterns are used to refine the assignment.
+#[must_use]
 pub fn assign_secondary_structure(
     residues: &[Residue],
     positions: Option<&[[f64; 3]]>,
@@ -365,10 +370,8 @@ mod tests {
     #[test]
     fn short_helix_demoted_to_coil() {
         // 2 helix residues (below min_helix_run=3) → coil
-        let residues: Vec<Residue> = vec![
-            helix_residue(AminoAcid::Ala),
-            helix_residue(AminoAcid::Gly),
-        ];
+        let residues: Vec<Residue> =
+            vec![helix_residue(AminoAcid::Ala), helix_residue(AminoAcid::Gly)];
         let result = assign_secondary_structure(&residues, None, &SecondaryConfig::default());
         for a in &result.assignments {
             assert_eq!(*a, SecondaryStructure::Coil);
@@ -387,9 +390,15 @@ mod tests {
     fn mixed_chain() {
         // 4 helix + 3 sheet + 2 coil
         let mut residues = Vec::new();
-        for _ in 0..4 { residues.push(helix_residue(AminoAcid::Ala)); }
-        for _ in 0..3 { residues.push(sheet_residue(AminoAcid::Val)); }
-        for _ in 0..2 { residues.push(coil_residue(AminoAcid::Gly)); }
+        for _ in 0..4 {
+            residues.push(helix_residue(AminoAcid::Ala));
+        }
+        for _ in 0..3 {
+            residues.push(sheet_residue(AminoAcid::Val));
+        }
+        for _ in 0..2 {
+            residues.push(coil_residue(AminoAcid::Gly));
+        }
 
         let result = assign_secondary_structure(&residues, None, &SecondaryConfig::default());
         assert_eq!(result.helix_count, 4);
@@ -409,7 +418,8 @@ mod tests {
             coil_residue(AminoAcid::Gly),
         ];
         let result = assign_secondary_structure(&residues, None, &SecondaryConfig::default());
-        let total = result.helix_fraction + result.sheet_fraction
+        let total = result.helix_fraction
+            + result.sheet_fraction
             + (result.coil_count as f64 / residues.len() as f64);
         assert!((total - 1.0).abs() < 1e-10);
     }
@@ -462,8 +472,14 @@ mod tests {
             Residue::new(AminoAcid::Ala, -0.9, -0.6, PI),
             Residue::new(AminoAcid::Ala, -0.9, -0.6, PI),
         ];
-        let strict = SecondaryConfig { helix_tolerance: 0.1, ..Default::default() };
-        let relaxed = SecondaryConfig { helix_tolerance: 0.7, ..Default::default() };
+        let strict = SecondaryConfig {
+            helix_tolerance: 0.1,
+            ..Default::default()
+        };
+        let relaxed = SecondaryConfig {
+            helix_tolerance: 0.7,
+            ..Default::default()
+        };
 
         let r_strict = assign_secondary_structure(&residues, None, &strict);
         let r_relaxed = assign_secondary_structure(&residues, None, &relaxed);
@@ -526,9 +542,7 @@ mod tests {
             residues.push(helix_residue(AminoAcid::Ala));
         }
         // Create positions where residues 0 and 4 are close (alpha helix pattern)
-        let positions: Vec<[f64; 3]> = (0..8)
-            .map(|i| [i as f64 * 3.8, 0.0, 0.0])
-            .collect();
+        let positions: Vec<[f64; 3]> = (0..8).map(|i| [i as f64 * 3.8, 0.0, 0.0]).collect();
         let cfg = SecondaryConfig {
             use_hbonds: true,
             ..Default::default()

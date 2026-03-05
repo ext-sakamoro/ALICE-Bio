@@ -11,21 +11,30 @@ pub struct ProteinSdf {
     residues: Vec<Residue>,
     /// Alpha-carbon positions computed from backbone angles.
     positions: Vec<[f64; 3]>,
-    /// Pre-computed per-residue VdW radii — avoids repeated match dispatch in eval hot path.
+    /// Pre-computed per-residue `VdW` radii — avoids repeated match dispatch in eval hot path.
     radii: Vec<f64>,
 }
 
 impl ProteinSdf {
     /// Build from residues, computing Cα positions from phi/psi chain geometry.
+    #[must_use]
     pub fn new(residues: Vec<Residue>) -> Self {
         let positions = compute_positions(&residues);
-        let radii = residues.iter().map(|r| r.amino.van_der_waals_radius()).collect();
-        Self { residues, positions, radii }
+        let radii = residues
+            .iter()
+            .map(|r| r.amino.van_der_waals_radius())
+            .collect();
+        Self {
+            residues,
+            positions,
+            radii,
+        }
     }
 
     /// Signed distance: minimum over all atom spheres.
-    /// Negative = inside an atom VdW radius, positive = outside.
+    /// Negative = inside an atom `VdW` radius, positive = outside.
     #[inline]
+    #[must_use]
     pub fn eval(&self, point: &[f64; 3]) -> f64 {
         let mut min_dist = f64::MAX;
         // min_dist is a signed distance; convert to squared threshold for early culling.
@@ -55,16 +64,19 @@ impl ProteinSdf {
     }
 
     /// Batch evaluation.
+    #[must_use]
     pub fn eval_batch(&self, points: &[[f64; 3]]) -> Vec<f64> {
         points.iter().map(|p| self.eval(p)).collect()
     }
 
-    /// Axis-aligned bounding box with VdW padding.
+    /// Axis-aligned bounding box with `VdW` padding.
     pub fn bounding_box(&self) -> ([f64; 3], [f64; 3]) {
         if self.positions.is_empty() {
             return ([0.0; 3], [0.0; 3]);
         }
-        let max_r = self.residues.iter()
+        let max_r = self
+            .residues
+            .iter()
             .map(|r| r.amino.van_der_waals_radius())
             .fold(0.0_f64, f64::max);
 
@@ -72,8 +84,12 @@ impl ProteinSdf {
         let mut max = [f64::MIN; 3];
         for pos in &self.positions {
             for i in 0..3 {
-                if pos[i] < min[i] { min[i] = pos[i]; }
-                if pos[i] > max[i] { max[i] = pos[i]; }
+                if pos[i] < min[i] {
+                    min[i] = pos[i];
+                }
+                if pos[i] > max[i] {
+                    max[i] = pos[i];
+                }
             }
         }
         for i in 0..3 {
@@ -85,16 +101,19 @@ impl ProteinSdf {
 
     /// Number of residues.
     #[inline]
+    #[must_use]
     pub fn residue_count(&self) -> usize {
         self.residues.len()
     }
 
     /// Access Cα positions.
+    #[must_use]
     pub fn positions(&self) -> &[[f64; 3]] {
         &self.positions
     }
 
     /// Access residues.
+    #[must_use]
     pub fn residues(&self) -> &[Residue] {
         &self.residues
     }
@@ -110,7 +129,7 @@ fn compute_positions(residues: &[Residue]) -> Vec<[f64; 3]> {
     positions.push([0.0, 0.0, 0.0]);
 
     let mut dir_theta = 0.0_f64; // accumulated direction in XY plane
-    let mut dir_phi = 0.0_f64;   // accumulated direction in Z
+    let mut dir_phi = 0.0_f64; // accumulated direction in Z
 
     for i in 1..residues.len() {
         // Update direction from previous residue's phi/psi angles
@@ -170,7 +189,10 @@ mod tests {
 
     #[test]
     fn batch_matches_individual() {
-        let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala), make_residue(AminoAcid::Val)]);
+        let sdf = ProteinSdf::new(vec![
+            make_residue(AminoAcid::Ala),
+            make_residue(AminoAcid::Val),
+        ]);
         let points = [[0.0, 0.0, 0.0], [5.0, 5.0, 5.0], [10.0, 0.0, 0.0]];
         let batch = sdf.eval_batch(&points);
         for (i, p) in points.iter().enumerate() {
@@ -230,7 +252,11 @@ mod tests {
         let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala)]);
         let r = AminoAcid::Ala.van_der_waals_radius();
         let d = sdf.eval(&[r, 0.0, 0.0]);
-        assert!(d.abs() < 1e-10, "SDF at VdW surface should be ~0, got {}", d);
+        assert!(
+            d.abs() < 1e-10,
+            "SDF at VdW surface should be ~0, got {}",
+            d
+        );
     }
 
     #[test]
@@ -249,14 +275,29 @@ mod tests {
         let r = aa.van_der_waals_radius();
         // Position is at origin, so bb_min should be [-r, -r, -r] and bb_max [r, r, r]
         for i in 0..3 {
-            assert!((bb_min[i] - (-r)).abs() < 1e-10, "bb_min[{}] = {}, expected {}", i, bb_min[i], -r);
-            assert!((bb_max[i] - r).abs() < 1e-10, "bb_max[{}] = {}, expected {}", i, bb_max[i], r);
+            assert!(
+                (bb_min[i] - (-r)).abs() < 1e-10,
+                "bb_min[{}] = {}, expected {}",
+                i,
+                bb_min[i],
+                -r
+            );
+            assert!(
+                (bb_max[i] - r).abs() < 1e-10,
+                "bb_max[{}] = {}, expected {}",
+                i,
+                bb_max[i],
+                r
+            );
         }
     }
 
     #[test]
     fn first_residue_at_origin() {
-        let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala), make_residue(AminoAcid::Val)]);
+        let sdf = ProteinSdf::new(vec![
+            make_residue(AminoAcid::Ala),
+            make_residue(AminoAcid::Val),
+        ]);
         let pos = sdf.positions();
         assert_eq!(pos[0], [0.0, 0.0, 0.0]);
     }
@@ -272,11 +313,16 @@ mod tests {
         let sdf = ProteinSdf::new(residues);
         let pos = sdf.positions();
         for i in 1..pos.len() {
-            let dx = pos[i][0] - pos[i-1][0];
-            let dy = pos[i][1] - pos[i-1][1];
-            let dz = pos[i][2] - pos[i-1][2];
-            let dist = (dx*dx + dy*dy + dz*dz).sqrt();
-            assert!((dist - CA_DISTANCE).abs() < 1e-10, "Step {} distance = {}", i, dist);
+            let dx = pos[i][0] - pos[i - 1][0];
+            let dy = pos[i][1] - pos[i - 1][1];
+            let dz = pos[i][2] - pos[i - 1][2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            assert!(
+                (dist - CA_DISTANCE).abs() < 1e-10,
+                "Step {} distance = {}",
+                i,
+                dist
+            );
         }
     }
 }

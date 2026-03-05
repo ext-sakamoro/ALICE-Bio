@@ -4,8 +4,9 @@ use crate::amino::Residue;
 use crate::cell_list::{CellList, CellListConfig};
 use crate::hbond::{HBondConfig, HBondDetector};
 use crate::potential::{torsion_potential, TotalEnergy};
+use rayon::prelude::*;
 
-/// Lennard-Jones evaluated directly from dist_sq, avoiding sqrt.
+/// Lennard-Jones evaluated directly from `dist_sq`, avoiding sqrt.
 /// V = 4ε[(σ/r)^12 - (σ/r)^6] = 4ε[(σ²/r²)^6 - (σ²/r²)^3]
 #[inline(always)]
 fn lennard_jones_sq(dist_sq: f64, epsilon: f64, sigma: f64) -> f64 {
@@ -20,20 +21,27 @@ fn lennard_jones_sq(dist_sq: f64, epsilon: f64, sigma: f64) -> f64 {
 /// For small systems (N < 50), uses O(N²) brute-force. For larger systems,
 /// uses a cell-linked list for O(N) neighbor search. Hydrogen bonds are
 /// evaluated via `HBondDetector`.
+#[must_use]
 pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) -> TotalEnergy {
-    let mut vdw = 0.0;
-    let mut torsional = 0.0;
-
-    // Pre-compute per-residue VdW radii to avoid repeated match dispatch in inner loop.
-    let radii: Vec<f64> = residues.iter().map(|r| r.amino.van_der_waals_radius()).collect();
-
     const R_MIN_SQ: f64 = 0.1 * 0.1; // threshold = 0.1 Å, squared
     const CELL_LIST_THRESHOLD: usize = 50;
     const VDW_CUTOFF: f64 = 12.0; // Angstroms
 
+    let mut vdw = 0.0;
+    let mut torsional = 0.0;
+
+    // Pre-compute per-residue VdW radii to avoid repeated match dispatch in inner loop.
+    let radii: Vec<f64> = residues
+        .iter()
+        .map(|r| r.amino.van_der_waals_radius())
+        .collect();
+
     if positions.len() >= CELL_LIST_THRESHOLD {
         // Cell-linked list path: O(N) for uniform distributions.
-        let cfg = CellListConfig { cutoff: VDW_CUTOFF, origin: None };
+        let cfg = CellListConfig {
+            cutoff: VDW_CUTOFF,
+            origin: None,
+        };
         let cl = CellList::build(positions, &cfg);
         let pairs = cl.find_pairs(positions);
         for &(i, j, dist_sq) in &pairs {
@@ -43,19 +51,24 @@ pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) ->
             }
         }
     } else {
-        // Brute-force path for small systems.
-        for i in 0..positions.len() {
-            for j in (i + 1)..positions.len() {
-                let dx = positions[j][0] - positions[i][0];
-                let dy = positions[j][1] - positions[i][1];
-                let dz = positions[j][2] - positions[i][2];
-                let dist_sq = dx * dx + dy * dy + dz * dz;
-                if dist_sq > R_MIN_SQ {
-                    let sigma = (radii[i] + radii[j]) * 0.5;
-                    vdw += lennard_jones_sq(dist_sq, 0.1, sigma);
+        // Brute-force path for small systems — parallel outer loop.
+        vdw = (0..positions.len())
+            .into_par_iter()
+            .map(|i| {
+                let mut partial = 0.0f64;
+                for j in (i + 1)..positions.len() {
+                    let dx = positions[j][0] - positions[i][0];
+                    let dy = positions[j][1] - positions[i][1];
+                    let dz = positions[j][2] - positions[i][2];
+                    let dist_sq = dx * dx + dy * dy + dz * dz;
+                    if dist_sq > R_MIN_SQ {
+                        let sigma = (radii[i] + radii[j]) * 0.5;
+                        partial += lennard_jones_sq(dist_sq, 0.1, sigma);
+                    }
                 }
-            }
-        }
+                partial
+            })
+            .sum();
     }
 
     // Torsional energy from backbone angles
@@ -78,23 +91,29 @@ pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) ->
 }
 
 /// Returns pairs of residue indices whose Cα atoms are within `threshold` Angstroms.
+#[must_use]
 pub fn contact_map(positions: &[[f64; 3]], threshold: f64) -> Vec<(usize, usize)> {
-    let mut contacts = Vec::new();
     let t2 = threshold * threshold;
-    for i in 0..positions.len() {
-        for j in (i + 1)..positions.len() {
-            let dx = positions[j][0] - positions[i][0];
-            let dy = positions[j][1] - positions[i][1];
-            let dz = positions[j][2] - positions[i][2];
-            if dx * dx + dy * dy + dz * dz <= t2 {
-                contacts.push((i, j));
+    let contacts: Vec<(usize, usize)> = (0..positions.len())
+        .into_par_iter()
+        .flat_map(|i| {
+            let mut local = Vec::new();
+            for j in (i + 1)..positions.len() {
+                let dx = positions[j][0] - positions[i][0];
+                let dy = positions[j][1] - positions[i][1];
+                let dz = positions[j][2] - positions[i][2];
+                if dx * dx + dy * dy + dz * dz <= t2 {
+                    local.push((i, j));
+                }
             }
-        }
-    }
+            local
+        })
+        .collect();
     contacts
 }
 
-/// Radius of gyration: Rg = sqrt(mean(|r_i - r_center|²))
+/// Radius of gyration: Rg = `sqrt(mean(|r_i` - `r_center|²`))
+#[must_use]
 pub fn radius_of_gyration(positions: &[[f64; 3]]) -> f64 {
     if positions.is_empty() {
         return 0.0;
@@ -123,6 +142,7 @@ pub fn radius_of_gyration(positions: &[[f64; 3]]) -> f64 {
 }
 
 /// Euclidean distance between the first and last Cα.
+#[must_use]
 pub fn end_to_end_distance(positions: &[[f64; 3]]) -> f64 {
     if positions.len() < 2 {
         return 0.0;
@@ -210,7 +230,11 @@ mod tests {
             [3.0, 0.0, 0.0],
         ];
         let e = evaluate_pairwise_energy(&residues, &positions);
-        assert!(e.hydrogen_bonds < 0.0, "H-bond energy should be negative, got {}", e.hydrogen_bonds);
+        assert!(
+            e.hydrogen_bonds < 0.0,
+            "H-bond energy should be negative, got {}",
+            e.hydrogen_bonds
+        );
     }
 
     #[test]
@@ -220,9 +244,7 @@ mod tests {
         let residues: Vec<Residue> = (0..n)
             .map(|_| Residue::new(AminoAcid::Ala, -1.0, -0.8, PI))
             .collect();
-        let positions: Vec<[f64; 3]> = (0..n)
-            .map(|i| [i as f64 * 3.8, 0.0, 0.0])
-            .collect();
+        let positions: Vec<[f64; 3]> = (0..n).map(|i| [i as f64 * 3.8, 0.0, 0.0]).collect();
         let e = evaluate_pairwise_energy(&residues, &positions);
         assert!(e.van_der_waals.is_finite());
         assert!(e.torsional.is_finite());
@@ -257,15 +279,24 @@ mod tests {
     fn rg_symmetric_cube_vertices() {
         // 8 vertices of a cube centered at origin with side length 2
         let positions = [
-            [-1.0, -1.0, -1.0], [-1.0, -1.0, 1.0],
-            [-1.0, 1.0, -1.0],  [-1.0, 1.0, 1.0],
-            [1.0, -1.0, -1.0],  [1.0, -1.0, 1.0],
-            [1.0, 1.0, -1.0],   [1.0, 1.0, 1.0],
+            [-1.0, -1.0, -1.0],
+            [-1.0, -1.0, 1.0],
+            [-1.0, 1.0, -1.0],
+            [-1.0, 1.0, 1.0],
+            [1.0, -1.0, -1.0],
+            [1.0, -1.0, 1.0],
+            [1.0, 1.0, -1.0],
+            [1.0, 1.0, 1.0],
         ];
         let rg = radius_of_gyration(&positions);
         // Each vertex is at distance sqrt(3) from center, Rg = sqrt(3)
         let expected = 3.0_f64.sqrt();
-        assert!((rg - expected).abs() < 1e-10, "Rg = {}, expected {}", rg, expected);
+        assert!(
+            (rg - expected).abs() < 1e-10,
+            "Rg = {}, expected {}",
+            rg,
+            expected
+        );
     }
 
     #[test]
@@ -289,7 +320,11 @@ mod tests {
         ];
         let positions = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]; // far apart, no VdW
         let e = evaluate_pairwise_energy(&residues, &positions);
-        assert!(e.torsional > 0.0, "Torsional energy should be positive, got {}", e.torsional);
+        assert!(
+            e.torsional > 0.0,
+            "Torsional energy should be positive, got {}",
+            e.torsional
+        );
     }
 
     #[test]

@@ -59,18 +59,13 @@ pub enum HBondRole {
 ///
 /// All residues (except Pro at N-terminus) have backbone N-H (donor)
 /// and C=O (acceptor). Sidechain donors/acceptors are role-dependent.
+#[must_use]
 pub fn classify_hbond_role(aa: AminoAcid) -> HBondRole {
     match aa {
         // Pro lacks backbone N-H → acceptor only
         AminoAcid::Pro => HBondRole::Acceptor,
-        // Sidechains with both donor and acceptor groups
-        AminoAcid::Ser | AminoAcid::Thr | AminoAcid::Tyr |
-        AminoAcid::Asn | AminoAcid::Gln | AminoAcid::His |
-        AminoAcid::Trp | AminoAcid::Cys | AminoAcid::Lys |
-        AminoAcid::Arg => HBondRole::Both,
-        // Asp, Glu: acceptor sidechains + backbone donor
-        AminoAcid::Asp | AminoAcid::Glu => HBondRole::Both,
-        // Hydrophobic residues: backbone only (both N-H and C=O)
+        // All other residues have both donor and acceptor capability
+        // (backbone N-H donor + C=O acceptor, plus sidechain contributions)
         _ => HBondRole::Both,
     }
 }
@@ -83,6 +78,7 @@ pub struct HBondDetector {
 
 impl HBondDetector {
     /// Create a new detector with the given configuration.
+    #[must_use]
     pub fn new(config: HBondConfig) -> Self {
         Self { config }
     }
@@ -90,13 +86,10 @@ impl HBondDetector {
     /// Detect hydrogen bonds between residues given their Cα positions.
     ///
     /// Uses a simplified electrostatic model:
-    /// E = 0.084 * 332 * (1/r_ON + 1/r_CH - 1/r_OH - 1/r_CN)
+    /// E = 0.084 * 332 * (`1/r_ON` + `1/r_CH` - `1/r_OH` - `1/r_CN`)
     /// Approximated as E ≈ -k / d^2 where d is Cα distance.
-    pub fn detect(
-        &self,
-        residues: &[Residue],
-        positions: &[[f64; 3]],
-    ) -> Vec<HBondHit> {
+    #[must_use]
+    pub fn detect(&self, residues: &[Residue], positions: &[[f64; 3]]) -> Vec<HBondHit> {
         let n = residues.len().min(positions.len());
         let max_dsq = self.config.max_distance * self.config.max_distance;
         let mut hits = Vec::new();
@@ -155,6 +148,7 @@ impl HBondDetector {
     }
 
     /// Detect and return only the count of hydrogen bonds.
+    #[must_use]
     pub fn count(&self, residues: &[Residue], positions: &[[f64; 3]]) -> usize {
         self.detect(residues, positions).len()
     }
@@ -363,11 +357,7 @@ mod tests {
             make_residue(AminoAcid::Leu),
             make_residue(AminoAcid::Ile),
         ];
-        let positions = [
-            [0.0, 0.0, 0.0],
-            [3.8, 0.0, 0.0],
-            [7.6, 0.0, 0.0],
-        ];
+        let positions = [[0.0, 0.0, 0.0], [3.8, 0.0, 0.0], [7.6, 0.0, 0.0]];
         // Should not panic, even though residues.len() != positions.len()
         let hits = detector.detect(&residues, &positions);
         assert!(hits.is_empty() || !hits.is_empty()); // no panic is the test
@@ -445,15 +435,12 @@ mod tests {
             energy_cutoff: 0.0,
         };
         let detector = HBondDetector::new(cfg);
-        let residues = vec![
-            make_residue(AminoAcid::Ala),
-            make_residue(AminoAcid::Gly),
-        ];
-        let positions = [
-            [0.0, 0.0, 0.0],
-            [2.8, 0.0, 0.0],
-        ];
+        let residues = vec![make_residue(AminoAcid::Ala), make_residue(AminoAcid::Gly)];
+        let positions = [[0.0, 0.0, 0.0], [2.8, 0.0, 0.0]];
         let hits = detector.detect(&residues, &positions);
-        assert!(!hits.is_empty(), "Adjacent residues should form H-bond with min_seq_separation=1");
+        assert!(
+            !hits.is_empty(),
+            "Adjacent residues should form H-bond with min_seq_separation=1"
+        );
     }
 }
