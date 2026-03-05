@@ -229,19 +229,19 @@ impl CellList {
 
     /// Number of cells in the grid.
     #[must_use]
-    pub fn cell_count(&self) -> usize {
+    pub const fn cell_count(&self) -> usize {
         self.cells.len()
     }
 
     /// Grid dimensions.
     #[must_use]
-    pub fn dims(&self) -> [usize; 3] {
+    pub const fn dims(&self) -> [usize; 3] {
         self.dims
     }
 
     /// Grid origin (minimum corner).
     #[must_use]
-    pub fn origin(&self) -> [f64; 3] {
+    pub const fn origin(&self) -> [f64; 3] {
         self.origin
     }
 }
@@ -268,12 +268,13 @@ fn dist_sq(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     let dz = a[2] - b[2];
-    dx * dx + dy * dy + dz * dz
+    dz.mul_add(dz, dx.mul_add(dx, dy * dy))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -353,7 +354,7 @@ mod tests {
         let cell_set: std::collections::HashSet<(usize, usize)> =
             cell_pairs.iter().map(|&(i, j, _)| (i, j)).collect();
         for &(i, j) in &brute_pairs {
-            assert!(cell_set.contains(&(i, j)), "Missing pair ({}, {})", i, j);
+            assert!(cell_set.contains(&(i, j)), "Missing pair ({i}, {j})");
         }
         assert_eq!(cell_set.len(), brute_pairs.len());
     }
@@ -469,12 +470,17 @@ mod tests {
         };
         let cl = CellList::build(&pos, &cfg);
 
-        let nbrs_of_0: Vec<usize> = cl.neighbors_of(0, &pos).iter().map(|&(i, _)| i).collect();
-        let nbrs_of_1: Vec<usize> = cl.neighbors_of(1, &pos).iter().map(|&(i, _)| i).collect();
-
-        if nbrs_of_0.contains(&1) {
+        if cl
+            .neighbors_of(0, &pos)
+            .iter()
+            .map(|&(i, _)| i)
+            .any(|x| x == 1)
+        {
             assert!(
-                nbrs_of_1.contains(&0),
+                cl.neighbors_of(1, &pos)
+                    .iter()
+                    .map(|&(i, _)| i)
+                    .any(|x| x == 0),
                 "Neighbor symmetry violated: 0 sees 1 but 1 doesn't see 0"
             );
         }

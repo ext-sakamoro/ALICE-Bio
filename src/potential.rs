@@ -45,7 +45,7 @@ pub fn hydrogen_bond(r: f64, r_eq: f64, depth: f64) -> f64 {
 #[inline(always)]
 #[must_use]
 pub fn torsion_potential(angle: f64, barrier: f64, n: u32, phase: f64) -> f64 {
-    (barrier * 0.5) * (1.0 + (n as f64 * angle - phase).cos())
+    (barrier * 0.5) * (1.0 + (n as f64).mul_add(angle, -phase).cos())
 }
 
 /// Aggregated energy from different interaction types.
@@ -66,6 +66,7 @@ impl TotalEnergy {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 
@@ -74,7 +75,7 @@ mod tests {
         // At r = sigma * 2^(1/6), LJ reaches minimum = -epsilon
         let sigma = 3.4;
         let epsilon = 1.0;
-        let r_min = sigma * 2.0_f64.powf(1.0 / 6.0);
+        let r_min = sigma * (1.0_f64 / 6.0).exp2();
         let v = lennard_jones(r_min, epsilon, sigma);
         assert!((v - (-epsilon)).abs() < 1e-10);
     }
@@ -138,13 +139,13 @@ mod tests {
         let sigma = 3.4;
         let epsilon = 1.0;
         let v = lennard_jones(sigma, epsilon, sigma);
-        assert!(v.abs() < 1e-10, "LJ at r=sigma should be ~0, got {}", v);
+        assert!(v.abs() < 1e-10, "LJ at r=sigma should be ~0, got {v}");
     }
 
     #[test]
     fn lj_approaches_zero_at_large_r() {
         let v = lennard_jones(100.0, 1.0, 3.4);
-        assert!(v.abs() < 1e-6, "LJ should approach 0 at large r, got {}", v);
+        assert!(v.abs() < 1e-6, "LJ should approach 0 at large r, got {v}");
     }
 
     #[test]
@@ -169,8 +170,7 @@ mod tests {
         let v = hydrogen_bond(1.0, 2.8, 5.0);
         assert!(
             v > 0.0,
-            "H-bond should be repulsive at short distance, got {}",
-            v
+            "H-bond should be repulsive at short distance, got {v}",
         );
     }
 
@@ -179,8 +179,7 @@ mod tests {
         let v = hydrogen_bond(100.0, 2.8, 5.0);
         assert!(
             v.abs() < 1e-4,
-            "H-bond should approach 0 at large r, got {}",
-            v
+            "H-bond should approach 0 at large r, got {v}",
         );
     }
 
@@ -204,9 +203,7 @@ mod tests {
         let v = torsion_potential(angle, barrier, n, phase);
         assert!(
             (v - barrier).abs() < 1e-10,
-            "Expected barrier={}, got {}",
-            barrier,
-            v
+            "Expected barrier={barrier}, got {v}",
         );
     }
 
@@ -219,6 +216,6 @@ mod tests {
         let phase = 0.0;
         let angle = PI / n as f64;
         let v = torsion_potential(angle, barrier, n, phase);
-        assert!(v.abs() < 1e-10, "Torsion minimum should be 0, got {}", v);
+        assert!(v.abs() < 1e-10, "Torsion minimum should be 0, got {v}");
     }
 }

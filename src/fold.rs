@@ -44,7 +44,7 @@ impl ProteinSdf {
             let dx = point[0] - pos[0];
             let dy = point[1] - pos[1];
             let dz = point[2] - pos[2];
-            let dist_sq = dx * dx + dy * dy + dz * dz;
+            let dist_sq = dz.mul_add(dz, dx.mul_add(dx, dy * dy));
             let r = self.radii[i];
             // Early-exit: if the closest possible signed distance from this atom
             // (dist - r) cannot beat min_dist, skip sqrt entirely.
@@ -102,7 +102,7 @@ impl ProteinSdf {
     /// Number of residues.
     #[inline]
     #[must_use]
-    pub fn residue_count(&self) -> usize {
+    pub const fn residue_count(&self) -> usize {
         self.residues.len()
     }
 
@@ -147,6 +147,7 @@ fn compute_positions(residues: &[Residue]) -> Vec<[f64; 3]> {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::amino::AminoAcid;
@@ -252,11 +253,7 @@ mod tests {
         let sdf = ProteinSdf::new(vec![make_residue(AminoAcid::Ala)]);
         let r = AminoAcid::Ala.van_der_waals_radius();
         let d = sdf.eval(&[r, 0.0, 0.0]);
-        assert!(
-            d.abs() < 1e-10,
-            "SDF at VdW surface should be ~0, got {}",
-            d
-        );
+        assert!(d.abs() < 1e-10, "SDF at VdW surface should be ~0, got {d}",);
     }
 
     #[test]
@@ -319,9 +316,7 @@ mod tests {
             let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             assert!(
                 (dist - CA_DISTANCE).abs() < 1e-10,
-                "Step {} distance = {}",
-                i,
-                dist
+                "Step {i} distance = {dist}",
             );
         }
     }

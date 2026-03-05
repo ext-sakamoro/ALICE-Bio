@@ -30,7 +30,7 @@ impl AminoAcid {
     #[allow(clippy::match_same_arms)] // distinct amino acids share physical values
     #[inline]
     #[must_use]
-    pub fn van_der_waals_radius(&self) -> f64 {
+    pub const fn van_der_waals_radius(&self) -> f64 {
         match self {
             Self::Gly => 1.7,
             Self::Ala => 1.9,
@@ -59,7 +59,7 @@ impl AminoAcid {
     #[allow(clippy::match_same_arms)] // distinct amino acids share mass values
     #[inline]
     #[must_use]
-    pub fn mass(&self) -> f64 {
+    pub const fn mass(&self) -> f64 {
         match self {
             Self::Gly => 57.02,
             Self::Ala => 71.04,
@@ -88,7 +88,7 @@ impl AminoAcid {
     #[allow(clippy::match_same_arms)] // distinct amino acids share hydrophobicity values
     #[inline]
     #[must_use]
-    pub fn hydrophobicity(&self) -> f64 {
+    pub const fn hydrophobicity(&self) -> f64 {
         match self {
             Self::Ile => 4.5,
             Self::Val => 4.2,
@@ -116,7 +116,7 @@ impl AminoAcid {
     /// Single-letter IUPAC code.
     #[inline]
     #[must_use]
-    pub fn one_letter(&self) -> char {
+    pub const fn one_letter(&self) -> char {
         match self {
             Self::Ala => 'A',
             Self::Arg => 'R',
@@ -142,7 +142,7 @@ impl AminoAcid {
     }
 
     /// All 20 standard amino acids.
-    pub const ALL: [AminoAcid; 20] = [
+    pub const ALL: [Self; 20] = [
         Self::Ala,
         Self::Arg,
         Self::Asn,
@@ -181,7 +181,7 @@ pub struct Residue {
 impl Residue {
     #[inline]
     #[must_use]
-    pub fn new(amino: AminoAcid, phi: f64, psi: f64, omega: f64) -> Self {
+    pub const fn new(amino: AminoAcid, phi: f64, psi: f64, omega: f64) -> Self {
         Self {
             amino,
             phi,
@@ -263,14 +263,14 @@ mod tests {
     #[test]
     fn all_positive_vdw_radius() {
         for aa in &AminoAcid::ALL {
-            assert!(aa.van_der_waals_radius() > 0.0, "{:?}", aa);
+            assert!(aa.van_der_waals_radius() > 0.0, "{aa:?}");
         }
     }
 
     #[test]
     fn all_positive_mass() {
         for aa in &AminoAcid::ALL {
-            assert!(aa.mass() > 0.0, "{:?}", aa);
+            assert!(aa.mass() > 0.0, "{aa:?}");
         }
     }
 
@@ -278,15 +278,18 @@ mod tests {
     fn hydrophobicity_range() {
         for aa in &AminoAcid::ALL {
             let h = aa.hydrophobicity();
-            assert!(h >= -4.5 && h <= 4.5, "{:?}: {}", aa, h);
+            assert!((-4.5..=4.5).contains(&h), "{aa:?}: {h}");
         }
     }
 
     #[test]
     fn one_letter_codes_unique() {
-        let codes: Vec<char> = AminoAcid::ALL.iter().map(|a| a.one_letter()).collect();
+        let codes: Vec<char> = AminoAcid::ALL
+            .iter()
+            .map(super::AminoAcid::one_letter)
+            .collect();
         let mut dedup = codes.clone();
-        dedup.sort();
+        dedup.sort_unstable();
         dedup.dedup();
         assert_eq!(codes.len(), dedup.len());
     }
@@ -430,11 +433,14 @@ mod tests {
 
     #[test]
     fn residue_field_access() {
+        #[allow(clippy::approx_constant)]
         let r = Residue::new(AminoAcid::Met, 1.5, -2.3, 3.14);
         assert_eq!(r.amino, AminoAcid::Met);
         assert!((r.phi - 1.5).abs() < 1e-15);
         assert!((r.psi - (-2.3)).abs() < 1e-15);
-        assert!((r.omega - 3.14).abs() < 1e-15);
+        #[allow(clippy::approx_constant)]
+        let expected_omega = 3.14;
+        assert!((r.omega - expected_omega).abs() < 1e-15);
     }
 
     #[test]
@@ -472,7 +478,7 @@ mod tests {
         // Ile has the highest hydrophobicity (4.5)
         let ile_h = AminoAcid::Ile.hydrophobicity();
         for aa in &AminoAcid::ALL {
-            assert!(aa.hydrophobicity() <= ile_h, "{:?}", aa);
+            assert!(aa.hydrophobicity() <= ile_h, "{aa:?}");
         }
     }
 }

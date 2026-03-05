@@ -13,7 +13,7 @@ fn lennard_jones_sq(dist_sq: f64, epsilon: f64, sigma: f64) -> f64 {
     let sigma_sq = sigma * sigma;
     let inv_r2 = sigma_sq / dist_sq;
     let inv_r6 = inv_r2 * inv_r2 * inv_r2;
-    4.0 * epsilon * (inv_r6 * inv_r6 - inv_r6)
+    4.0 * epsilon * inv_r6.mul_add(inv_r6, -inv_r6)
 }
 
 /// Evaluate pairwise interaction energy for all residue pairs.
@@ -60,7 +60,7 @@ pub fn evaluate_pairwise_energy(residues: &[Residue], positions: &[[f64; 3]]) ->
                     let dx = positions[j][0] - positions[i][0];
                     let dy = positions[j][1] - positions[i][1];
                     let dz = positions[j][2] - positions[i][2];
-                    let dist_sq = dx * dx + dy * dy + dz * dz;
+                    let dist_sq = dz.mul_add(dz, dx.mul_add(dx, dy * dy));
                     if dist_sq > R_MIN_SQ {
                         let sigma = (radii[i] + radii[j]) * 0.5;
                         partial += lennard_jones_sq(dist_sq, 0.1, sigma);
@@ -102,7 +102,7 @@ pub fn contact_map(positions: &[[f64; 3]], threshold: f64) -> Vec<(usize, usize)
                 let dx = positions[j][0] - positions[i][0];
                 let dy = positions[j][1] - positions[i][1];
                 let dz = positions[j][2] - positions[i][2];
-                if dx * dx + dy * dy + dz * dz <= t2 {
+                if dz.mul_add(dz, dx.mul_add(dx, dy * dy)) <= t2 {
                     local.push((i, j));
                 }
             }
@@ -136,7 +136,7 @@ pub fn radius_of_gyration(positions: &[[f64; 3]]) -> f64 {
         let dx = p[0] - center[0];
         let dy = p[1] - center[1];
         let dz = p[2] - center[2];
-        sum_sq += dx * dx + dy * dy + dz * dz;
+        sum_sq += dz.mul_add(dz, dx.mul_add(dx, dy * dy));
     }
     (sum_sq * inv_n).sqrt()
 }
@@ -152,10 +152,11 @@ pub fn end_to_end_distance(positions: &[[f64; 3]]) -> f64 {
     let dx = last[0] - first[0];
     let dy = last[1] - first[1];
     let dz = last[2] - first[2];
-    (dx * dx + dy * dy + dz * dz).sqrt()
+    dz.mul_add(dz, dx.mul_add(dx, dy * dy)).sqrt()
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use crate::amino::{AminoAcid, Residue};
@@ -293,9 +294,7 @@ mod tests {
         let expected = 3.0_f64.sqrt();
         assert!(
             (rg - expected).abs() < 1e-10,
-            "Rg = {}, expected {}",
-            rg,
-            expected
+            "Rg = {rg}, expected {expected}",
         );
     }
 

@@ -91,10 +91,10 @@ fn in_region(phi: f64, psi: f64, phi_c: f64, psi_c: f64, tol: f64) -> bool {
 #[inline]
 fn angle_diff(a: f64, b: f64) -> f64 {
     let mut d = a - b;
-    while d > std::f64::consts::PI {
+    d %= 2.0 * std::f64::consts::PI;
+    if d > std::f64::consts::PI {
         d -= 2.0 * std::f64::consts::PI;
-    }
-    while d < -std::f64::consts::PI {
+    } else if d < -std::f64::consts::PI {
         d += 2.0 * std::f64::consts::PI;
     }
     d
@@ -418,9 +418,8 @@ mod tests {
             coil_residue(AminoAcid::Gly),
         ];
         let result = assign_secondary_structure(&residues, None, &SecondaryConfig::default());
-        let total = result.helix_fraction
-            + result.sheet_fraction
-            + (result.coil_count as f64 / residues.len() as f64);
+        let coil_fraction = result.coil_count as f64 / residues.len() as f64;
+        let total = result.helix_fraction + result.sheet_fraction + coil_fraction;
         assert!((total - 1.0).abs() < 1e-10);
     }
 

@@ -60,7 +60,7 @@ pub enum HBondRole {
 /// All residues (except Pro at N-terminus) have backbone N-H (donor)
 /// and C=O (acceptor). Sidechain donors/acceptors are role-dependent.
 #[must_use]
-pub fn classify_hbond_role(aa: AminoAcid) -> HBondRole {
+pub const fn classify_hbond_role(aa: AminoAcid) -> HBondRole {
     match aa {
         // Pro lacks backbone N-H → acceptor only
         AminoAcid::Pro => HBondRole::Acceptor,
@@ -79,7 +79,7 @@ pub struct HBondDetector {
 impl HBondDetector {
     /// Create a new detector with the given configuration.
     #[must_use]
-    pub fn new(config: HBondConfig) -> Self {
+    pub const fn new(config: HBondConfig) -> Self {
         Self { config }
     }
 
@@ -159,7 +159,7 @@ fn dist_sq(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     let dx = a[0] - b[0];
     let dy = a[1] - b[1];
     let dz = a[2] - b[2];
-    dx * dx + dy * dy + dz * dz
+    dz.mul_add(dz, dx.mul_add(dx, dy * dy))
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -370,8 +370,7 @@ mod tests {
             let role = classify_hbond_role(*aa);
             assert!(
                 role == HBondRole::Donor || role == HBondRole::Acceptor || role == HBondRole::Both,
-                "{:?} has no valid role",
-                aa
+                "{aa:?} has no valid role",
             );
         }
     }
