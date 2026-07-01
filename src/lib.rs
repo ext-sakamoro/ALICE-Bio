@@ -8,7 +8,13 @@
     clippy::many_single_char_names,
     clippy::module_name_repetitions,
     clippy::inline_always,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::too_long_first_doc_paragraph,
+    clippy::missing_panics_doc,
+    clippy::missing_errors_doc,
+    clippy::assigning_clones
 )]
 
 //! ALICE-Bio — Molecular Structure as Signed Distance Functions
@@ -32,6 +38,10 @@
 
 pub mod amino;
 pub mod cell_list;
+pub mod fasta;
+pub use fasta::{
+    parse as parse_fasta_v2, reverse_complement, FastaError, FastaRecord as FastaRecordV2,
+};
 pub mod fold;
 pub mod forcefield;
 pub mod hbond;
