@@ -49,6 +49,7 @@ pub mod homology;
 pub mod interaction;
 pub mod md_bio;
 pub mod potential;
+pub mod prelude;
 pub mod secondary;
 pub mod sequence;
 pub mod validate;
