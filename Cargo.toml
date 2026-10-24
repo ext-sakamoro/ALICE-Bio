@@ -4,7 +4,8 @@ version = "0.2.0"
 edition = "2021"
 authors = ["Moroya Sakamoto <sakamoro@alicelaw.net>"]
 description = "ALICE-Bio — Molecular structure as signed distance functions, amino acid energy potentials, folding SDF"
-license = "AGPL-3.0-only OR LicenseRef-Commercial"
+license = "LicenseRef-Proprietary"
+publish = false
 repository = "https://github.com/ext-sakamoro/ALICE-Bio"
 
 [dependencies]
